@@ -77,13 +77,24 @@ function switchTab(tab) {
 function renderActiveTab() {
   const content = document.getElementById('tabContent');
   switch (State.activeTab) {
-    case 'shifts':     content.innerHTML = renderShifts();    break;
-    case 'budget':     content.innerHTML = renderBudget();    break;
-    case 'taxes':      content.innerHTML = renderTaxes();     break;
-    case 'fieldguide': content.innerHTML = renderFieldGuide();break;
-    case 'goals':      content.innerHTML = renderGoals();     break;
-    case 'settings':   content.innerHTML = renderSettings();  break;
+    case 'shifts':     content.innerHTML = renderShifts();       break;
+    case 'calendar':   content.innerHTML = renderCalendarTab();  break;
+    case 'budget':     content.innerHTML = renderBudget();       break;
+    case 'taxes':      content.innerHTML = renderTaxes();        break;
+    case 'fieldguide': content.innerHTML = renderFieldGuide();   break;
+    case 'goals':      content.innerHTML = renderGoals();        break;
+    case 'paystubs':   content.innerHTML = renderPaystubs();     break;
+    case 'settings':   content.innerHTML = renderSettings();     break;
   }
+  // Animate goal bar directly after render
+  setTimeout(() => {
+    const bar = document.getElementById('mainGoalBar');
+    if (bar && bar.style.width === '0%') {
+      const pctText = bar.closest('.goal-bar-wrap')?.querySelector('.goal-bar-pct')?.textContent;
+      const pct = pctText?.match(/\d+/)?.[0];
+      if (pct) bar.style.width = Math.min(100, parseInt(pct)) + '%';
+    }
+  }, 100);
 }
 
 // ---- SHIFTS TAB ----
@@ -105,6 +116,12 @@ function renderShifts() {
   const greeting  = Persona.pick(Persona.greeting(State.profile?.display_name, situation));
   const monthName = new Date(State.currentYear, State.currentMonth - 1).toLocaleString('default', { month: 'long' });
 
+  // Today's shifts for quick reminder
+  const todayStr    = now.toISOString().split('T')[0];
+  const todayShifts = active.filter(e => e.shift_date === todayStr);
+  const tomorrowStr = new Date(now.getTime() + 86400000).toISOString().split('T')[0];
+  const tmrShifts   = active.filter(e => e.shift_date === tomorrowStr);
+
   // Earned badges
   const earnedBadges = [];
   if (active.length >= 1) earnedBadges.push({ icon:'🌱', label:'First Shift' });
@@ -112,12 +129,39 @@ function renderShifts() {
   if (active.length >= 5) earnedBadges.push({ icon:'🎲', label:'On a Roll' });
   const allBadges = Persona.BADGES.filter(b => !earnedBadges.find(e => e.label === b.label));
 
+  // Build inline reminder
+  let reminderHtml = '';
+  if (todayShifts.length > 0 && State.currentMonth === now.getMonth() + 1) {
+    const s = todayShifts[0];
+    const job = State.jobs.find(j => j.id === s.job_id);
+    const jobName = s.jobs?.name || job?.name || 'shift';
+    const tc = Tax.calculate(s.gross_pay || 0, State.taxSettings);
+    const timeStr = s.start_time ? formatTime12(s.start_time) : '';
+    reminderHtml = `
+      <div class="inline-reminder today">
+        <span class="reminder-emoji">⏰</span>
+        <div><strong>Today:</strong> ${jobName}${timeStr ? ' at ' + timeStr : ''} · $${Math.round(tc.takeHome)} after taxes</div>
+      </div>`;
+  } else if (tmrShifts.length > 0 && State.currentMonth === now.getMonth() + 1) {
+    const s = tmrShifts[0];
+    const job = State.jobs.find(j => j.id === s.job_id);
+    const jobName = s.jobs?.name || job?.name || 'shift';
+    const timeStr = s.start_time ? formatTime12(s.start_time) : '';
+    reminderHtml = `
+      <div class="inline-reminder tomorrow">
+        <span class="reminder-emoji">🌅</span>
+        <div><strong>Tomorrow:</strong> ${jobName}${timeStr ? ' at ' + timeStr : ''}. Rest up tonight 🌸</div>
+      </div>`;
+  }
+
   return `
     <div class="shifts-view">
       <div class="greeting-card">
         <div class="greeting-text">${greeting}</div>
         <div class="greeting-sub">${monthName} ${State.currentYear}</div>
       </div>
+
+      ${reminderHtml}
 
       <div class="summary-strip">
         <div class="summary-item">
@@ -173,48 +217,182 @@ function renderShifts() {
     </div>`;
 }
 
-// Animate goal bar after render
-document.addEventListener('DOMContentLoaded', () => {
-  const observer = new MutationObserver(() => {
-    const bar = document.getElementById('mainGoalBar');
-    if (bar && bar.style.width === '0%') {
-      const pct = bar.closest('.goal-bar-wrap')?.querySelector('.goal-bar-pct')?.textContent?.match(/\d+/)?.[0];
-      if (pct) setTimeout(() => { bar.style.width = Math.min(100, pct) + '%'; }, 150);
-    }
-  });
-  observer.observe(document.getElementById('tabContent') || document.body, { childList: true, subtree: true });
-});
+// BUG FIX 1: color lookup chain — checks join data first, then State.jobs, then default
+function getJobColor(e) {
+  if (e.jobs?.color) return e.jobs.color;
+  const job = State.jobs.find(j => j.id === e.job_id);
+  return job?.color || '#f4a7c3';
+}
+
+function getJobName(e) {
+  if (e.jobs?.name) return e.jobs.name;
+  const job = State.jobs.find(j => j.id === e.job_id);
+  return job?.name || e.title || 'Shift';
+}
 
 function shiftCard(e) {
-  const job       = State.jobs.find(j => j.id === e.job_id);
-  const color     = job?.color || '#f4a7c3';
-  const taxInfo   = Tax.TAX_TREATMENTS[e.tax_treatment] || Tax.TAX_TREATMENTS.taxable;
+  const color       = getJobColor(e);
+  const taxInfo     = Tax.TAX_TREATMENTS[e.tax_treatment] || Tax.TAX_TREATMENTS.taxable;
   const isCancelled = e.status === 'cancelled';
-  const isGig     = e.source_type === 'gig';
-  const payLabel  = isGig && e.flat_amount ? `$${fmt(e.flat_amount)} flat` : `${e.hours}h × $${e.hourly_rate}/hr`;
+  const isGig       = e.source_type === 'gig';
+  // BUG FIX 6: safe time display
+  const startStr = e.start_time ? formatTime12(e.start_time) : '';
+  const endStr   = e.end_time   ? formatTime12(e.end_time)   : '';
+  const timeStr  = startStr ? `${startStr}${endStr ? ' – ' + endStr : ''}` : '';
+  const payLabel = isGig && e.flat_amount ? `$${fmt(e.flat_amount)} flat` : `${e.hours || '?'}h × $${e.hourly_rate || '?'}/hr`;
+  // BUG FIX 4: hide "Synced from Google Calendar" notes
+  const showNotes = e.notes && e.notes !== 'Synced from Google Calendar';
+  const isRecurring = e.is_recurring || e.recurrence_rule;
 
   return `
-    <div class="shift-card ${isCancelled ? 'cancelled' : ''}" style="--job-color:${color}">
+    <div class="shift-card ${isCancelled ? 'cancelled' : ''}">
       <div class="shift-color-bar" style="background:${color}"></div>
       <div class="shift-main">
         <div class="shift-top">
-          <span class="shift-job">${e.jobs?.name || e.title || 'Shift'}</span>
+          <span class="shift-job">${getJobName(e)}${isRecurring ? ' <span class="recurring-badge">↻</span>' : ''}</span>
           <span class="shift-earn ${isCancelled ? 'strike' : ''}">$${fmt(e.gross_pay)}</span>
         </div>
         <div class="shift-meta">
           <span>${formatDate(e.shift_date)}</span>
-          ${e.start_time ? `<span>${e.start_time.slice(0,5)} – ${e.end_time?.slice(0,5)||'?'}</span>` : ''}
+          ${timeStr ? `<span>${timeStr}</span>` : ''}
           <span>${payLabel}</span>
           ${isGig ? `<span class="gig-badge" style="color:${taxInfo.color}">${taxInfo.label}</span>` : ''}
         </div>
-        ${e.notes ? `<div class="shift-notes">${e.notes}</div>` : ''}
+        ${showNotes ? `<div class="shift-notes">${e.notes}</div>` : ''}
       </div>
       <div class="shift-actions">
+        <button class="icon-btn" onclick="openEditShift('${e.id}')" title="Edit">✎</button>
         ${!isCancelled
           ? `<button class="icon-btn" onclick="cancelShift('${e.id}')" title="Cancel">✕</button>`
           : `<button class="icon-btn restore" onclick="restoreShift('${e.id}')" title="Restore">↩</button>`}
       </div>
     </div>`;
+}
+
+// ---- EDIT SHIFT (Bug Fix 2) ----
+function openEditShift(id) {
+  const e    = State.incomeEvents.find(ev => ev.id === id);
+  if (!e) return;
+  const jobs = State.jobs;
+  const isGig = e.source_type === 'gig';
+
+  openModal(`
+    <div class="modal-card">
+      <div class="modal-handle"></div>
+      <div class="modal-title">Edit shift</div>
+
+      <div class="form-group">
+        <label>Job</label>
+        <select id="editShiftJob" class="bnm-select">
+          <option value="">— No job / one-off —</option>
+          ${jobs.map(j => `<option value="${j.id}" ${j.id === e.job_id ? 'selected' : ''}>${j.name} ($${j.hourly_rate}/hr)</option>`).join('')}
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label>Date</label>
+        <input type="date" id="editShiftDate" class="bnm-input" value="${e.shift_date}" />
+      </div>
+
+      ${!isGig ? `
+        <div class="form-row">
+          <div class="form-group">
+            <label>Start time</label>
+            <input type="time" id="editShiftStart" class="bnm-input" value="${e.start_time?.slice(0,5) || ''}" />
+          </div>
+          <div class="form-group">
+            <label>End time</label>
+            <input type="time" id="editShiftEnd" class="bnm-input" value="${e.end_time?.slice(0,5) || ''}" />
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Hourly rate ($)</label>
+          <input type="number" id="editShiftRate" class="bnm-input" value="${e.hourly_rate || ''}" step="0.50" />
+        </div>
+      ` : `
+        <div class="form-group">
+          <label>Flat amount ($)</label>
+          <input type="number" id="editFlatAmount" class="bnm-input" value="${e.flat_amount || ''}" step="0.01" />
+        </div>
+        <div class="form-group">
+          <label>Tax treatment</label>
+          <select id="editTaxTreatment" class="bnm-select">
+            <option value="taxable" ${e.tax_treatment === 'taxable' ? 'selected' : ''}>Taxable</option>
+            <option value="informal" ${e.tax_treatment === 'informal' ? 'selected' : ''}>Probably informal</option>
+            <option value="excluded" ${e.tax_treatment === 'excluded' ? 'selected' : ''}>Excluded</option>
+          </select>
+        </div>
+      `}
+
+      <div class="form-group">
+        <label>Notes</label>
+        <input type="text" id="editShiftNotes" class="bnm-input"
+          value="${(e.notes && e.notes !== 'Synced from Google Calendar') ? e.notes : ''}"
+          placeholder="Optional notes" />
+      </div>
+
+      ${e.is_recurring ? `
+        <div style="font-size:11px;color:var(--muted);padding:8px 0;font-family:'DM Mono',monospace">
+          ↻ This is a recurring shift
+        </div>` : ''}
+
+      <div class="modal-actions">
+        <button class="btn-secondary" onclick="closeModal()">Cancel</button>
+        <button class="btn-primary" onclick="saveEditShift('${id}', ${isGig})">Save changes</button>
+      </div>
+    </div>`);
+}
+
+async function saveEditShift(id, isGig) {
+  const e      = State.incomeEvents.find(ev => ev.id === id);
+  if (!e) return;
+
+  const jobId  = document.getElementById('editShiftJob').value || null;
+  const date   = document.getElementById('editShiftDate').value;
+  const notes  = document.getElementById('editShiftNotes').value;
+  const job    = State.jobs.find(j => j.id === jobId);
+
+  let updates = { job_id: jobId, shift_date: date, notes: notes || null };
+
+  if (isGig) {
+    const flat = parseFloat(document.getElementById('editFlatAmount')?.value) || 0;
+    updates.flat_amount   = flat;
+    updates.gross_pay     = flat;
+    updates.tax_treatment = document.getElementById('editTaxTreatment')?.value || 'taxable';
+  } else {
+    const start = document.getElementById('editShiftStart').value;
+    const end   = document.getElementById('editShiftEnd').value;
+    const rate  = parseFloat(document.getElementById('editShiftRate').value) || e.hourly_rate || 0;
+    let hours = e.hours;
+    if (start && end) {
+      const [sh,sm] = start.split(':').map(Number);
+      const [eh,em] = end.split(':').map(Number);
+      hours = ((eh*60+em) - (sh*60+sm)) / 60;
+    }
+    updates.start_time  = start || e.start_time;
+    updates.end_time    = end   || e.end_time;
+    updates.hours       = hours;
+    updates.hourly_rate = rate;
+    updates.gross_pay   = Math.round(hours * rate * 100) / 100;
+  }
+
+  const { error } = await IncomeDB.update(id, updates);
+  if (error) { showToast('Error updating shift', 'error'); return; }
+
+  // Update State
+  const idx = State.incomeEvents.findIndex(ev => ev.id === id);
+  if (idx >= 0) {
+    State.incomeEvents[idx] = {
+      ...State.incomeEvents[idx],
+      ...updates,
+      jobs: job ? { name: job.name, color: job.color } : State.incomeEvents[idx].jobs,
+    };
+  }
+
+  closeModal();
+  showToast('Shift updated ✓', 'success');
+  updateMoodRing();
+  renderActiveTab();
 }
 
 // ---- BUDGET TAB ----
@@ -363,7 +541,7 @@ function renderTaxes() {
 
       <div class="ytd-input-card">
         <div class="tax-card-title">Update year-to-date withholding</div>
-        <div class="ytd-sub">Enter from your most recent paystub for a refund estimate</div>
+        <div class="ytd-sub">Enter from your most recent paystub for a refund estimate — or use the Paystubs tab for full tracking</div>
         <div class="ytd-row">
           <input type="number" id="ytdGross" placeholder="YTD Gross $" class="bnm-input" value="${State.taxSettings?.ytd_gross || ''}" />
           <input type="number" id="ytdWithheld" placeholder="YTD Withheld $" class="bnm-input" value="${State.taxSettings?.ytd_withheld || ''}" />
@@ -510,6 +688,7 @@ function openAddShift() {
     <div class="modal-card">
       <div class="modal-handle"></div>
       <div class="modal-title">Add income event</div>
+
       <div class="form-group">
         <label>Type</label>
         <select id="shiftSourceType" class="bnm-select" onchange="toggleGigFields()">
@@ -517,6 +696,7 @@ function openAddShift() {
           <option value="gig">One-off gig (babysitting, tutoring…)</option>
         </select>
       </div>
+
       <div class="form-group">
         <label>Job</label>
         <select id="shiftJob" class="bnm-select" onchange="prefillRate()">
@@ -524,10 +704,13 @@ function openAddShift() {
           ${jobs.map(j => `<option value="${j.id}" data-rate="${j.hourly_rate}">${j.name} ($${j.hourly_rate}/hr)</option>`).join('')}
         </select>
       </div>
+
       <div class="form-group">
         <label>Date</label>
-        <input type="date" id="shiftDate" class="bnm-input" value="${new Date().toISOString().split('T')[0]}" />
+        <input type="date" id="shiftDate" class="bnm-input" value="${new Date().toISOString().split('T')[0]}"
+          onchange="Recurring.updatePreview(this.value)" />
       </div>
+
       <div id="hourlyFields">
         <div class="form-row">
           <div class="form-group">
@@ -544,6 +727,7 @@ function openAddShift() {
           <input type="number" id="shiftRate" class="bnm-input" placeholder="e.g. 21.50" step="0.50" />
         </div>
       </div>
+
       <div id="gigFields" style="display:none">
         <div class="form-group">
           <label>Flat amount paid ($)</label>
@@ -559,10 +743,17 @@ function openAddShift() {
           <div class="tax-treatment-note" id="taxTreatmentNote">Counts toward your gross income and tax calculations.</div>
         </div>
       </div>
+
       <div class="form-group">
         <label>Title / notes</label>
         <input type="text" id="shiftTitle" class="bnm-input" placeholder="e.g. Babysitting — Smith family" />
       </div>
+
+      <!-- Recurring toggle -->
+      <button type="button" id="recurringToggle" class="btn-sm" style="width:100%;margin-bottom:8px"
+        onclick="toggleRecurring()">Repeat this shift</button>
+      ${Recurring.renderRecurringFields()}
+
       <div class="modal-actions">
         <button class="btn-secondary" onclick="closeModal()">Cancel</button>
         <button class="btn-primary" onclick="saveShift()">Add 🌸</button>
@@ -620,6 +811,11 @@ async function saveShift() {
     showToast('Please fill in all required fields', 'error'); return;
   }
 
+  // Check if recurring
+  const recurringSection = document.getElementById('recurringSection');
+  const isRecurring = recurringSection?.style.display !== 'none';
+  const recurrenceRule = isRecurring ? Recurring.buildRule() : null;
+
   const job = State.jobs.find(j => j.id === jobId);
   const event = {
     job_id: jobId, source_type: sourceType,
@@ -630,12 +826,27 @@ async function saveShift() {
     tax_treatment: taxTreatment, notes: title || null,
     start_time: document.getElementById('shiftStart')?.value || null,
     end_time:   document.getElementById('shiftEnd')?.value   || null,
+    is_recurring: !!recurrenceRule,
+    recurrence_rule: recurrenceRule,
   };
 
   const { data, error } = await IncomeDB.create(State.user.id, event);
   if (error) { showToast('Error saving shift', 'error'); return; }
 
-  State.incomeEvents.push({ ...data, jobs: job ? { name: job.name, color: job.color } : null });
+  const newEvent = { ...data, jobs: job ? { name: job.name, color: job.color } : null };
+  State.incomeEvents.push(newEvent);
+
+  // Create recurring instances
+  if (recurrenceRule && data) {
+    const result = await Recurring.createInstances(State.user.id, event, data.id, recurrenceRule);
+    if (result.count > 0) {
+      showToast(`Shift + ${result.count} recurring instances created 🌸`, 'success');
+      await loadMonthData(); // reload to get all instances
+      closeModal();
+      return;
+    }
+  }
+
   closeModal();
   showToast(Persona.pick(Persona.shift.added(fmt(grossPay))), 'success');
   updateMoodRing();
@@ -689,9 +900,12 @@ function openAddCategory() {
     </div>`);
 }
 
+// BUG FIX 3: null-safe selectColor
 function selectColor(c) {
-  document.getElementById('catColor').value = c;
-  document.getElementById('jobColor') && (document.getElementById('jobColor').value = c);
+  const catEl = document.getElementById('catColor');
+  const jobEl = document.getElementById('jobColor');
+  if (catEl) catEl.value = c;
+  if (jobEl) jobEl.value = c;
   document.querySelectorAll('.color-dot').forEach(d => d.classList.toggle('selected', d.dataset.color === c));
 }
 
@@ -877,23 +1091,19 @@ function showApp() {
   renderActiveTab();
 }
 
-// Google OAuth sign-in
 async function signInWithGoogle() {
+  document.getElementById('authMsg').textContent = '';
   const { error } = await getSupabase().auth.signInWithOAuth({
     provider: 'google',
     options: {
       redirectTo: 'https://nanjalamayungu.github.io/Broke-No-More/',
       scopes: 'https://www.googleapis.com/auth/calendar.readonly',
-      queryParams: {
-        access_type: 'offline',
-        prompt: 'consent',
-      }
+      queryParams: { access_type: 'offline', prompt: 'consent' }
     }
   });
   if (error) document.getElementById('authMsg').textContent = 'Error: ' + error.message;
 }
 
-// Magic link sign-in
 async function sendMagicLink() {
   const email = document.getElementById('authEmail').value.trim();
   if (!email) { showToast('Enter your email', 'error'); return; }
@@ -915,9 +1125,18 @@ function showToast(msg, type = 'info') {
 function fmt(n) {
   return Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 }
+
 function formatDate(d) {
   if (!d) return '';
   return new Date(d + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
+function formatTime12(timeStr) {
+  if (!timeStr) return '';
+  const [h, m] = timeStr.slice(0,5).split(':').map(Number);
+  const period = h >= 12 ? 'pm' : 'am';
+  const hour12 = h > 12 ? h - 12 : (h === 0 ? 12 : h);
+  return `${hour12}:${String(m).padStart(2,'0')}${period}`;
 }
 
 document.addEventListener('DOMContentLoaded', boot);
