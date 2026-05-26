@@ -1263,3 +1263,31 @@ body::before {
   .tax-status-cards .tax-status-card:last-child { grid-column: span 2; }
   .budget-totals { gap: 5px; }
 }
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 16px 0 12px;
+  color: var(--muted2);
+  font-size: 12px;
+  font-family: 'DM Mono', monospace;
+}
+.auth-divider::before,
+.auth-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.auth-submit.secondary {
+  background: var(--surface);
+  color: var(--pink-deep);
+  border: 1.5px solid var(--pink);
+  box-shadow: none;
+  margin-top: 10px;
+}
+.auth-submit.secondary:hover {
+  background: var(--surface2);
+  box-shadow: 0 2px 8px rgba(232,122,170,0.15);
+}
