@@ -879,17 +879,18 @@ function showApp() {
 
 // Google OAuth sign-in
 async function signInWithGoogle() {
-  document.getElementById('authMsg').textContent = '';
   const { error } = await getSupabase().auth.signInWithOAuth({
     provider: 'google',
     options: {
       redirectTo: 'https://nanjalamayungu.github.io/Broke-No-More/',
       scopes: 'https://www.googleapis.com/auth/calendar.readonly',
+      queryParams: {
+        access_type: 'offline',
+        prompt: 'consent',
+      }
     }
   });
-  if (error) {
-    document.getElementById('authMsg').textContent = 'Error: ' + error.message;
-  }
+  if (error) document.getElementById('authMsg').textContent = 'Error: ' + error.message;
 }
 
 // Magic link sign-in
