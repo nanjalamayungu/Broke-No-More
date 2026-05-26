@@ -21,9 +21,13 @@
   <div class="auth-logo">Broke<br><span>No More</span></div>
   <div class="auth-tagline">Your financial friend. No jargon. No judgment.</div>
   <div class="auth-card">
-    <div class="auth-label">Enter your email to sign in or sign up</div>
+    <div class="auth-label">Sign in to get started</div>
+    <button class="auth-submit" onclick="signInWithGoogle()">
+      <span style="margin-right:8px">🌸</span> Continue with Google
+    </button>
+    <div class="auth-divider"><span>or sign in with email</span></div>
     <input type="email" id="authEmail" placeholder="you@example.com" autocomplete="email" />
-    <button class="auth-submit" onclick="sendMagicLink()">Send me a login link 🌸</button>
+    <button class="auth-submit secondary" onclick="sendMagicLink()">Send me a login link ✉️</button>
     <div id="authMsg"></div>
   </div>
 </div>
