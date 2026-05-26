@@ -37,10 +37,25 @@ async signIn(email) {
     window.location.reload();
   },
 
-  onAuthChange(callback) {
-    return getSupabase().auth.onAuthStateChange(callback);
-  }
-};
+onAuthChange(callback) {
+  return getSupabase().auth.onAuthStateChange(async (event, session) => {
+    // Capture Google provider token immediately after OAuth sign-in
+    if (event === 'SIGNED_IN' && session?.provider_token) {
+      const { error } = await getSupabase()
+        .from('users')
+        .upsert({
+          id: session.user.id,
+          google_calendar_token: {
+            access_token:  session.provider_token,
+            refresh_token: session.provider_refresh_token || null,
+            captured_at:   new Date().toISOString(),
+          }
+        });
+      if (error) console.warn('Failed to store Google token:', error.message);
+    }
+    callback(event, session);
+  });
+},
 
 // ---- USER PROFILE ----
 
