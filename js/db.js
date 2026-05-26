@@ -39,7 +39,6 @@ const Auth = {
 
   onAuthChange(callback) {
     return getSupabase().auth.onAuthStateChange(async (event, session) => {
-      // Capture Google provider token immediately after OAuth sign-in
       if (event === 'SIGNED_IN' && session?.provider_token) {
         const { error } = await getSupabase()
           .from('users')
@@ -56,7 +55,7 @@ const Auth = {
       callback(event, session);
     });
   },
-}; // ← Auth object properly closed
+};
 
 // ---- USER PROFILE ----
 
@@ -157,6 +156,14 @@ const IncomeDB = {
     return { data, error };
   },
 
+  async createMany(userId, events) {
+    const { data, error } = await getSupabase()
+      .from('income_events')
+      .insert(events.map(e => ({ user_id: userId, ...e })))
+      .select();
+    return { data: data || [], error };
+  },
+
   async update(id, updates) {
     const { data, error } = await getSupabase()
       .from('income_events')
@@ -172,6 +179,15 @@ const IncomeDB = {
       .from('income_events')
       .update({ status: 'cancelled' })
       .eq('id', id);
+    return { error };
+  },
+
+  async removeFutureRecurring(parentId, fromDate) {
+    const { error } = await getSupabase()
+      .from('income_events')
+      .update({ status: 'cancelled' })
+      .eq('recurrence_parent_id', parentId)
+      .gte('shift_date', fromDate);
     return { error };
   },
 };
@@ -306,5 +322,47 @@ const TaxDB = {
       .select()
       .single();
     return { data, error };
+  },
+};
+
+// ---- PAYSTUBS ----
+
+const PaystubsDB = {
+  async list(userId, year) {
+    const { data, error } = await getSupabase()
+      .from('paystubs')
+      .select('*, jobs(name, color)')
+      .eq('user_id', userId)
+      .gte('pay_period_start', `${year}-01-01`)
+      .lte('pay_period_start', `${year}-12-31`)
+      .order('pay_period_start', { ascending: false });
+    return { data: data || [], error };
+  },
+
+  async create(userId, stub) {
+    const { data, error } = await getSupabase()
+      .from('paystubs')
+      .insert({ user_id: userId, ...stub })
+      .select()
+      .single();
+    return { data, error };
+  },
+
+  async remove(id) {
+    const { error } = await getSupabase()
+      .from('paystubs')
+      .delete()
+      .eq('id', id);
+    return { error };
+  },
+
+  async getYTD(userId, year) {
+    const { data, error } = await getSupabase()
+      .from('paystubs')
+      .select('gross_pay, federal_withheld, state_withheld, fica_withheld, net_pay, job_id')
+      .eq('user_id', userId)
+      .gte('pay_period_start', `${year}-01-01`)
+      .lte('pay_period_start', `${year}-12-31`);
+    return { data: data || [], error };
   },
 };
