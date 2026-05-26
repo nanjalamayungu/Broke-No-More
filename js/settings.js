@@ -158,6 +158,22 @@ function renderSettings() {
         </div>
       </div>
 
+      <!-- Calendar Sync -->
+      <div class="settings-section">
+        <div class="settings-section-title">📅 Google Calendar Sync</div>
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">Sync shifts from calendar</div>
+            <div class="setting-sub">Pulls events matching your job keywords</div>
+          </div>
+          <button class="btn-sm" onclick="syncCalendar()" id="syncCalBtn">Sync now</button>
+        </div>
+        <div id="syncCalStatus" style="font-size:11px;color:var(--muted);margin-top:8px;font-family:'DM Mono',monospace;display:none"></div>
+        <div style="font-size:11px;color:var(--muted2);margin-top:8px;line-height:1.6">
+          Make sure each job has a <strong>calendar keyword</strong> matching what HotSchedules puts in the event title. Currently checking for: <strong>${jobs.filter(j=>j.calendar_keyword).map(j=>j.calendar_keyword).join(', ') || 'none set'}</strong>
+        </div>
+      </div>
+
       <!-- Account -->
       <div class="settings-section">
         <div class="settings-section-title">🔐 Account</div>
@@ -336,4 +352,56 @@ async function updateJob(id) {
   closeModal();
   showToast('Job updated ✓', 'success');
   renderActiveTab();
+}
+
+// ---- Calendar sync ----
+async function syncCalendar() {
+  const btn    = document.getElementById('syncCalBtn');
+  const status = document.getElementById('syncCalStatus');
+  if (!btn || !status) return;
+
+  btn.textContent = 'Syncing…';
+  btn.disabled    = true;
+  status.style.display = 'block';
+  status.textContent   = 'Calling Google Calendar…';
+
+  try {
+    const session = await getSupabase().auth.getSession();
+    const token   = session?.data?.session?.access_token;
+
+    if (!token) {
+      status.textContent = '❌ Not signed in. Please sign out and sign back in with Google.';
+      btn.textContent = 'Sync now'; btn.disabled = false; return;
+    }
+
+    const res = await fetch(
+      `${APP_CONFIG.SUPABASE_URL}/functions/v1/sync-calendar`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        }
+      }
+    );
+
+    const data = await res.json();
+
+    if (data.code === 'NO_PROVIDER_TOKEN') {
+      status.textContent = '❌ Calendar access not granted. Sign out, then sign back in using the Google button.';
+    } else if (data.error) {
+      status.textContent = '❌ Error: ' + data.error;
+    } else {
+      status.textContent = `✅ ${data.message}`;
+      if (data.synced > 0) {
+        showToast(`${data.synced} new shifts pulled from calendar 🌸`, 'success');
+        await loadMonthData();
+      }
+    }
+  } catch (err) {
+    status.textContent = '❌ Network error: ' + err.message;
+  }
+
+  btn.textContent = 'Sync now';
+  btn.disabled    = false;
 }
