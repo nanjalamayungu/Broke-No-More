@@ -17,13 +17,15 @@ function getSupabase() {
 // ---- AUTH ----
 
 const Auth = {
-  async signIn(email) {
-    const { error } = await getSupabase().auth.signInWithOtp({
-      email,
-      options: { emailRedirectTo: window.location.origin }
-    });
-    return { error };
-  },
+async signIn(email) {
+  const { error } = await getSupabase().auth.signInWithOtp({
+    email,
+    options: { 
+      emailRedirectTo: 'https://nanjalamayungu.github.io/Broke-No-More/'
+    }
+  });
+  return { error };
+},
 
   async getUser() {
     const { data: { user } } = await getSupabase().auth.getUser();
