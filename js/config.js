@@ -9,11 +9,11 @@
 
 const APP_CONFIG = {
   // Supabase
-  SUPABASE_URL:      "YOUR_SUPABASE_PROJECT_URL",       // e.g. https://xxxx.supabase.co
-  SUPABASE_ANON_KEY: "YOUR_SUPABASE_ANON_KEY",          // public anon key, safe in frontend
+  SUPABASE_URL:      "https://dsqcqsgckgbxkaijqvbl.supabase.co",       // e.g. https://xxxx.supabase.co
+  SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRzcWNxc2dja2dieGthaWpxdmJsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk3NTU0MzMsImV4cCI6MjA5NTMzMTQzM30.PEJq4YJXylAXtHU_kLKVUb6FAPz11wkeLz6-2NsVW_w",          // public anon key, safe in frontend
 
   // Google OAuth — Client ID only (secret stays in Supabase Edge Function)
-  GOOGLE_CLIENT_ID:  "YOUR_GOOGLE_OAUTH_CLIENT_ID",     // ends in .apps.googleusercontent.com
+  GOOGLE_CLIENT_ID:  "8390186809-g767ji4v31mp1l6ro256qcrra3hi37co.apps.googleusercontent.com",     // ends in .apps.googleusercontent.com
 
   // App
   APP_NAME:          "Broke No More",
