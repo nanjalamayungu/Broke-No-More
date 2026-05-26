@@ -363,43 +363,113 @@ async function syncCalendar() {
   btn.textContent = 'Syncing…';
   btn.disabled    = true;
   status.style.display = 'block';
-  status.textContent   = 'Calling Google Calendar…';
+  status.textContent   = 'Reading your Google Calendar…';
 
   try {
-    const session = await getSupabase().auth.getSession();
-    const token   = session?.data?.session?.access_token;
+    // Get stored token from database
+    const { data: userData } = await getSupabase()
+      .from('users')
+      .select('google_calendar_token')
+      .eq('id', State.user.id)
+      .single();
 
-    if (!token) {
-      status.textContent = '❌ Not signed in. Please sign out and sign back in with Google.';
+    const tokenData = userData?.google_calendar_token;
+    if (!tokenData?.access_token) {
+      status.textContent = '❌ No calendar access. Sign out and sign back in with Google — you\'ll see a permissions screen this time.';
       btn.textContent = 'Sync now'; btn.disabled = false; return;
     }
 
-    const res = await fetch(
-      `${APP_CONFIG.SUPABASE_URL}/functions/v1/sync-calendar`,
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        }
-      }
+    const token = tokenData.access_token;
+
+    // Date range — previous month through next month
+    const now      = new Date();
+    const timeMin  = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString();
+    const timeMax  = new Date(now.getFullYear(), now.getMonth() + 2, 0).toISOString();
+
+    status.textContent = 'Fetching shifts from Google…';
+
+    const calRes = await fetch(
+      `https://www.googleapis.com/calendar/v3/calendars/primary/events?` +
+      `timeMin=${encodeURIComponent(timeMin)}&` +
+      `timeMax=${encodeURIComponent(timeMax)}&` +
+      `singleEvents=true&orderBy=startTime&maxResults=250`,
+      { headers: { Authorization: `Bearer ${token}` } }
     );
 
-    const data = await res.json();
-
-    if (data.code === 'NO_PROVIDER_TOKEN') {
-      status.textContent = '❌ Calendar access not granted. Sign out, then sign back in using the Google button.';
-    } else if (data.error) {
-      status.textContent = '❌ Error: ' + data.error;
-    } else {
-      status.textContent = `✅ ${data.message}`;
-      if (data.synced > 0) {
-        showToast(`${data.synced} new shifts pulled from calendar 🌸`, 'success');
-        await loadMonthData();
+    if (!calRes.ok) {
+      const err = await calRes.json();
+      if (err.error?.code === 401) {
+        status.textContent = '❌ Calendar access expired. Sign out and sign back in with Google.';
+      } else {
+        status.textContent = '❌ Google error: ' + (err.error?.message || 'Unknown error');
       }
+      btn.textContent = 'Sync now'; btn.disabled = false; return;
     }
+
+    const calData = await calRes.json();
+    const events  = calData.items || [];
+
+    // Build keyword map from jobs
+    const keywordMap = {};
+    State.jobs.forEach(j => {
+      if (j.calendar_keyword) keywordMap[j.calendar_keyword.toLowerCase()] = j;
+    });
+
+    let synced = 0, skipped = 0;
+
+    for (const event of events) {
+      const title = (event.summary || '').toLowerCase();
+      const matchedJob = Object.entries(keywordMap).find(([kw]) => title.includes(kw))?.[1];
+      if (!matchedJob || !event.start?.dateTime) continue;
+
+      const startDt  = new Date(event.start.dateTime);
+      const endDt    = new Date(event.end.dateTime);
+      const hours    = Math.round(((endDt - startDt) / 3600000) * 10) / 10;
+      if (hours < 0.5) continue;
+
+      const shiftDate = startDt.toISOString().split('T')[0];
+      const grossPay  = Math.round(hours * matchedJob.hourly_rate * 100) / 100;
+
+      // Check if already imported
+      const { data: existing } = await getSupabase()
+        .from('income_events')
+        .select('id')
+        .eq('user_id', State.user.id)
+        .eq('calendar_event_id', event.id)
+        .single();
+
+      if (existing) { skipped++; continue; }
+
+      const { error: insertError } = await getSupabase()
+        .from('income_events')
+        .insert({
+          user_id:           State.user.id,
+          job_id:            matchedJob.id,
+          source_type:       'calendar',
+          title:             event.summary || matchedJob.name,
+          shift_date:        shiftDate,
+          start_time:        startDt.toTimeString().slice(0, 5),
+          end_time:          endDt.toTimeString().slice(0, 5),
+          hours,
+          hourly_rate:       matchedJob.hourly_rate,
+          gross_pay:         grossPay,
+          status:            'scheduled',
+          tax_treatment:     'taxable',
+          calendar_event_id: event.id,
+          notes:             'Synced from Google Calendar',
+        });
+
+      if (!insertError) synced++;
+    }
+
+    status.textContent = `✅ Done — ${synced} new shifts added, ${skipped} already existed.`;
+    if (synced > 0) {
+      showToast(`${synced} shifts pulled from calendar 🌸`, 'success');
+      await loadMonthData();
+    }
+
   } catch (err) {
-    status.textContent = '❌ Network error: ' + err.message;
+    status.textContent = '❌ Error: ' + err.message;
   }
 
   btn.textContent = 'Sync now';
