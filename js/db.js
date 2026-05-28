@@ -366,3 +366,98 @@ const PaystubsDB = {
     return { data: data || [], error };
   },
 };
+
+// ---- SCHEDULED EXPENSES ----
+
+const ScheduledDB = {
+  async list(userId) {
+    const { data, error } = await getSupabase()
+      .from('scheduled_expenses')
+      .select('*, budget_categories(name, color)')
+      .eq('user_id', userId)
+      .order('due_date');
+    return { data: data || [], error };
+  },
+
+  async create(userId, exp) {
+    const { data, error } = await getSupabase()
+      .from('scheduled_expenses')
+      .insert({ user_id: userId, ...exp })
+      .select()
+      .single();
+    return { data, error };
+  },
+
+  async update(id, updates) {
+    const { data, error } = await getSupabase()
+      .from('scheduled_expenses')
+      .update(updates)
+      .eq('id', id)
+      .select()
+      .single();
+    return { data, error };
+  },
+
+  async remove(id) {
+    const { error } = await getSupabase()
+      .from('scheduled_expenses')
+      .delete()
+      .eq('id', id);
+    return { error };
+  },
+};
+
+// ---- RESET ALL USER DATA ----
+
+const ResetDB = {
+  async resetAll(userId) {
+    // Delete in dependency order
+    const tables = [
+      'income_events',
+      'expenses',
+      'scheduled_expenses',
+      'paystubs',
+      'budget_categories',
+      'goals',
+      'jobs',
+      'tax_settings',
+    ];
+    const errors = [];
+    for (const table of tables) {
+      const { error } = await getSupabase()
+        .from(table)
+        .delete()
+        .eq('user_id', userId);
+      if (error) errors.push(`${table}: ${error.message}`);
+    }
+    // Reset user profile fields but keep the account
+    await getSupabase()
+      .from('users')
+      .update({
+        monthly_goal: 2400,
+        google_calendar_token: null,
+        calendar_connected: false,
+      })
+      .eq('id', userId);
+    return { errors };
+  },
+
+  async resetShifts(userId, year, month) {
+    if (year && month) {
+      const start = `${year}-${String(month).padStart(2,'0')}-01`;
+      const end   = new Date(year, month, 0).toISOString().split('T')[0];
+      const { error } = await getSupabase()
+        .from('income_events')
+        .delete()
+        .eq('user_id', userId)
+        .gte('shift_date', start)
+        .lte('shift_date', end);
+      return { error };
+    }
+    const { error } = await getSupabase()
+      .from('income_events')
+      .delete()
+      .eq('user_id', userId);
+    return { error };
+  },
+};
