@@ -186,6 +186,39 @@ function renderSettings() {
         </div>
       </div>
 
+      <!-- Danger Zone -->
+      <div class="settings-section danger-zone">
+        <div class="settings-section-title">⚠️ Danger zone</div>
+
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">Clear this month's shifts</div>
+            <div class="setting-sub">Deletes all shifts in the currently viewed month only</div>
+          </div>
+          <button class="btn-sm danger-btn" onclick="clearShifts('month')">Clear month</button>
+        </div>
+
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">Clear all shifts</div>
+            <div class="setting-sub">Permanently deletes every shift across all months</div>
+          </div>
+          <button class="btn-sm danger-btn" onclick="clearShifts('all')">Clear all shifts</button>
+        </div>
+
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">Reset everything</div>
+            <div class="setting-sub">Wipes all shifts, jobs, budget, goals and settings. Keeps your account.</div>
+          </div>
+          <button class="btn-sm danger-btn" onclick="resetAllData()">Reset app</button>
+        </div>
+
+        <div style="font-size:11px;color:var(--muted);margin-top:10px;font-family:'DM Mono',monospace;line-height:1.6">
+          ⏰ All shifts are stored in Mountain Time (${MT.offsetLabel()}) — correct regardless of your device location.
+        </div>
+      </div>
+
     </div>`;
 }
 
@@ -422,12 +455,21 @@ async function syncCalendar() {
       const matchedJob = Object.entries(keywordMap).find(([kw]) => title.includes(kw))?.[1];
       if (!matchedJob || !event.start?.dateTime) continue;
 
-      const startDt  = new Date(event.start.dateTime);
-      const endDt    = new Date(event.end.dateTime);
-      const hours    = Math.round(((endDt - startDt) / 3600000) * 10) / 10;
+      // ── TIMEZONE FIX ──
+      // Parse in Mountain Time regardless of device location
+      const startMT = MT.fromCalendarString(event.start.dateTime);
+      const endMT   = MT.fromCalendarString(event.end.dateTime);
+      if (!startMT || !endMT) continue;
+
+      // Duration from raw UTC ms — timezone independent
+      const startDt = new Date(event.start.dateTime);
+      const endDt   = new Date(event.end.dateTime);
+      const hours   = Math.round(((endDt - startDt) / 3600000) * 10) / 10;
       if (hours < 0.5) continue;
 
-      const shiftDate = startDt.toISOString().split('T')[0];
+      const shiftDate = startMT.dateStr;  // MT date — correct from any device
+      const startTime = startMT.timeStr;  // MT time
+      const endTime   = endMT.timeStr;    // MT time
       const grossPay  = Math.round(hours * matchedJob.hourly_rate * 100) / 100;
 
       // Check if already imported
@@ -448,8 +490,8 @@ async function syncCalendar() {
           source_type:       'calendar',
           title:             event.summary || matchedJob.name,
           shift_date:        shiftDate,
-          start_time:        startDt.toTimeString().slice(0, 5),
-          end_time:          endDt.toTimeString().slice(0, 5),
+          start_time:        startTime,
+          end_time:          endTime,
           hours,
           hourly_rate:       matchedJob.hourly_rate,
           gross_pay:         grossPay,
@@ -462,7 +504,7 @@ async function syncCalendar() {
       if (!insertError) synced++;
     }
 
-    status.textContent = `✅ Done — ${synced} new shifts added, ${skipped} already existed.`;
+    status.textContent = `✅ Done — ${synced} new shifts added, ${skipped} already existed. Times stored in ${MT.offsetLabel()}.`;
     if (synced > 0) {
       showToast(`${synced} shifts pulled from calendar 🌸`, 'success');
       await loadMonthData();
@@ -474,4 +516,80 @@ async function syncCalendar() {
 
   btn.textContent = 'Sync now';
   btn.disabled    = false;
+}
+
+// ---- Clear shifts ----
+async function clearShifts(scope) {
+  const isAll = scope === 'all';
+  const monthLabel = new Date(State.currentYear, State.currentMonth - 1)
+    .toLocaleString('default', { month: 'long', year: 'numeric' });
+
+  const msg1 = isAll
+    ? 'This will permanently delete ALL your shifts across every month. Are you sure?'
+    : `This will delete all shifts in ${monthLabel}. Are you sure?`;
+
+  const msg2 = isAll
+    ? 'Last chance — this cannot be undone. Delete ALL shifts?'
+    : `Last chance — delete all ${monthLabel} shifts?`;
+
+  if (!confirm(msg1)) return;
+  if (!confirm(msg2)) return;
+
+  showToast('Clearing shifts…', 'warn');
+
+  const { error } = await ResetDB.resetShifts(
+    State.user.id,
+    isAll ? null : State.currentYear,
+    isAll ? null : State.currentMonth
+  );
+
+  if (error) { showToast('Error: ' + error.message, 'error'); return; }
+
+  if (isAll) {
+    State.incomeEvents = [];
+  } else {
+    const start = `${State.currentYear}-${String(State.currentMonth).padStart(2,'0')}-01`;
+    const end   = new Date(State.currentYear, State.currentMonth, 0).toISOString().split('T')[0];
+    State.incomeEvents = State.incomeEvents.filter(e =>
+      e.shift_date < start || e.shift_date > end
+    );
+  }
+
+  updateMoodRing();
+  showToast(isAll ? 'All shifts cleared ✓' : `${monthLabel} shifts cleared ✓`, 'success');
+  renderActiveTab();
+}
+
+// ---- Reset everything ----
+async function resetAllData() {
+  if (!confirm('RESET EVERYTHING? This deletes all your shifts, jobs, budget categories, goals, paystubs and settings. Your account is kept but everything else is gone.')) return;
+  if (!confirm('Are you absolutely sure? This cannot be undone.')) return;
+  if (!confirm('Final confirmation — wipe all data?')) return;
+
+  showToast('Resetting…', 'warn');
+
+  const { errors } = await ResetDB.resetAll(State.user.id);
+
+  if (errors.length > 0) {
+    showToast('Some errors — check console', 'error');
+    console.error('Reset errors:', errors);
+    return;
+  }
+
+  // Clear all local state
+  State.jobs         = [];
+  State.incomeEvents = [];
+  State.categories   = [];
+  State.expenses     = [];
+  State.goals        = [];
+  State.taxSettings  = APP_CONFIG.DEFAULTS;
+  State.profile      = { ...State.profile, monthly_goal: 2400 };
+  if (typeof PaystubState !== 'undefined') {
+    PaystubState.paystubs = [];
+    PaystubState.loaded   = false;
+  }
+
+  updateMoodRing();
+  showToast('App reset complete. Fresh start! 🌸', 'success');
+  switchTab('shifts');
 }
