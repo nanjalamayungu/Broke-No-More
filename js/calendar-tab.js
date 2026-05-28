@@ -4,11 +4,11 @@
 // ============================================================
 
 function renderCalendarTab() {
-  const now        = new Date();
   const year       = State.currentYear;
   const month      = State.currentMonth;
   const monthName  = new Date(year, month - 1).toLocaleString('default', { month: 'long' });
-  const today      = now.getFullYear() === year && now.getMonth() + 1 === month ? now.getDate() : null;
+  const mtNow      = MT.now();  // Always Mountain Time
+  const todayDay   = (mtNow.year === year && mtNow.month === month) ? mtNow.day : null;
 
   // Build a map of date → events
   const eventMap = {};
@@ -18,10 +18,9 @@ function renderCalendarTab() {
     eventMap[d].push(e);
   });
 
-  // Get today's and tomorrow's shifts for the reminder card
-  const todayStr    = now.toISOString().split('T')[0];
-  const tomorrow    = new Date(now); tomorrow.setDate(now.getDate() + 1);
-  const tomorrowStr = tomorrow.toISOString().split('T')[0];
+  // Always Mountain Time — correct from any device location
+  const todayStr    = MT.todayStr();
+  const tomorrowStr = MT.tomorrowStr();
   const todayShifts    = (eventMap[todayStr]    || []).filter(e => e.status !== 'cancelled');
   const tomorrowShifts = (eventMap[tomorrowStr] || []).filter(e => e.status !== 'cancelled');
 
@@ -46,8 +45,8 @@ function renderCalendarTab() {
   for (let day = 1; day <= daysInMonth; day++) {
     const dateStr  = `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
     const dayEvts  = (eventMap[dateStr] || []).filter(e => e.status !== 'cancelled');
-    const isToday  = day === today;
-    const isPast   = today && day < today;
+    const isToday  = day === todayDay;
+    const isPast   = todayDay && day < todayDay;
 
     // Get dots for each event (color coded by job)
     const dots = dayEvts.slice(0, 3).map(e => {
@@ -100,8 +99,8 @@ function renderCalendarTab() {
 }
 
 function buildReminderCard(todayShifts, tomorrowShifts, todayStr, tomorrowStr) {
-  const now  = new Date();
-  const hour = now.getHours();
+  const mtNow = MT.now();
+  const hour  = mtNow.hour;  // Mountain Time hour
 
   if (todayShifts.length > 0) {
     const shift    = todayShifts[0];
@@ -247,8 +246,17 @@ function formatTime12(timeStr) {
   const hour12 = h > 12 ? h - 12 : (h === 0 ? 12 : h);
   return `${hour12}:${String(m).padStart(2,'0')}${period}`;
 }
+// MT.formatTime12 is the canonical version — this local one is kept for compatibility
 
 function getTimeUntil(timeStr) {
+  if (!timeStr) return '';
+  const mins = MT.minutesUntil(timeStr);
+  if (mins === null || mins <= 0) return '';
+  const hrs  = Math.floor(mins / 60);
+  const rem  = mins % 60;
+  return hrs > 0 ? `${hrs}h ${rem}m` : `${rem} min`;
+}
+function _getTimeUntilOLD(timeStr) {
   if (!timeStr) return '';
   const now  = new Date();
   const [h, m] = timeStr.slice(0,5).split(':').map(Number);
