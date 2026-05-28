@@ -79,7 +79,7 @@ function renderActiveTab() {
   switch (State.activeTab) {
     case 'shifts':     content.innerHTML = renderShifts();       break;
     case 'calendar':   content.innerHTML = renderCalendarTab();  break;
-    case 'budget':     content.innerHTML = renderBudget();       break;
+    case 'budget':     content.innerHTML = renderBudgetEnhanced(); break;
     case 'taxes':      content.innerHTML = renderTaxes();        break;
     case 'fieldguide': content.innerHTML = renderFieldGuide();   break;
     case 'goals':      content.innerHTML = renderGoals();        break;
@@ -99,12 +99,12 @@ function renderActiveTab() {
 
 // ---- SHIFTS TAB ----
 function renderShifts() {
-  const events = State.incomeEvents;
-  const jobs   = State.jobs;
-  const now    = new Date();
+  const events  = State.incomeEvents;
+  const jobs    = State.jobs;
+  const mtNow   = MT.now();  // Always Mountain Time
   const daysInMonth = new Date(State.currentYear, State.currentMonth, 0).getDate();
-  const dayOfMonth  = (State.currentYear === now.getFullYear() && State.currentMonth === now.getMonth() + 1)
-    ? now.getDate() : daysInMonth;
+  const dayOfMonth  = (State.currentYear === mtNow.year && State.currentMonth === mtNow.month)
+    ? mtNow.day : daysInMonth;
 
   const active    = events.filter(e => e.status !== 'cancelled');
   const projected = active.reduce((s, e) => s + (e.gross_pay || 0), 0);
@@ -116,10 +116,10 @@ function renderShifts() {
   const greeting  = Persona.pick(Persona.greeting(State.profile?.display_name, situation));
   const monthName = new Date(State.currentYear, State.currentMonth - 1).toLocaleString('default', { month: 'long' });
 
-  // Today's shifts for quick reminder
-  const todayStr    = now.toISOString().split('T')[0];
+  // Today/tomorrow always in Mountain Time — works from any device location
+  const todayStr    = MT.todayStr();
   const todayShifts = active.filter(e => e.shift_date === todayStr);
-  const tomorrowStr = new Date(now.getTime() + 86400000).toISOString().split('T')[0];
+  const tomorrowStr = MT.tomorrowStr();
   const tmrShifts   = active.filter(e => e.shift_date === tomorrowStr);
 
   // Earned badges
@@ -131,22 +131,22 @@ function renderShifts() {
 
   // Build inline reminder
   let reminderHtml = '';
-  if (todayShifts.length > 0 && State.currentMonth === now.getMonth() + 1) {
+  if (todayShifts.length > 0 && State.currentMonth === mtNow.month && State.currentYear === mtNow.year) {
     const s = todayShifts[0];
     const job = State.jobs.find(j => j.id === s.job_id);
     const jobName = s.jobs?.name || job?.name || 'shift';
     const tc = Tax.calculate(s.gross_pay || 0, State.taxSettings);
-    const timeStr = s.start_time ? formatTime12(s.start_time) : '';
+    const timeStr = s.start_time ? MT.formatTime12(s.start_time) : '';
     reminderHtml = `
       <div class="inline-reminder today">
         <span class="reminder-emoji">⏰</span>
         <div><strong>Today:</strong> ${jobName}${timeStr ? ' at ' + timeStr : ''} · $${Math.round(tc.takeHome)} after taxes</div>
       </div>`;
-  } else if (tmrShifts.length > 0 && State.currentMonth === now.getMonth() + 1) {
+  } else if (tmrShifts.length > 0 && State.currentMonth === mtNow.month && State.currentYear === mtNow.year) {
     const s = tmrShifts[0];
     const job = State.jobs.find(j => j.id === s.job_id);
     const jobName = s.jobs?.name || job?.name || 'shift';
-    const timeStr = s.start_time ? formatTime12(s.start_time) : '';
+    const timeStr = s.start_time ? MT.formatTime12(s.start_time) : '';
     reminderHtml = `
       <div class="inline-reminder tomorrow">
         <span class="reminder-emoji">🌅</span>
@@ -236,8 +236,8 @@ function shiftCard(e) {
   const isCancelled = e.status === 'cancelled';
   const isGig       = e.source_type === 'gig';
   // BUG FIX 6: safe time display
-  const startStr = e.start_time ? formatTime12(e.start_time) : '';
-  const endStr   = e.end_time   ? formatTime12(e.end_time)   : '';
+  const startStr = e.start_time ? MT.formatTime12(e.start_time) : '';
+  const endStr   = e.end_time   ? MT.formatTime12(e.end_time)   : '';
   const timeStr  = startStr ? `${startStr}${endStr ? ' – ' + endStr : ''}` : '';
   const payLabel = isGig && e.flat_amount ? `$${fmt(e.flat_amount)} flat` : `${e.hours || '?'}h × $${e.hourly_rate || '?'}/hr`;
   // BUG FIX 4: hide "Synced from Google Calendar" notes
@@ -427,7 +427,7 @@ function renderBudget() {
 
       <div class="section-header">
         <span class="section-title">Categories</span>
-        <button class="btn-add" onclick="openAddCategory()">+ Category</button>
+        <button class="btn-add" onclick="openAddCategoryEnhanced()">+ Category</button>
       </div>
 
       ${cats.length === 0
@@ -707,7 +707,7 @@ function openAddShift() {
 
       <div class="form-group">
         <label>Date</label>
-        <input type="date" id="shiftDate" class="bnm-input" value="${new Date().toISOString().split('T')[0]}"
+        <input type="date" id="shiftDate" class="bnm-input" value="${MT.todayInputVal()}"
           onchange="Recurring.updatePreview(this.value)" />
       </div>
 
@@ -943,7 +943,7 @@ function openAddExpense() {
       </div>
       <div class="form-group">
         <label>Date</label>
-        <input type="date" id="expDate" class="bnm-input" value="${new Date().toISOString().split('T')[0]}" />
+        <input type="date" id="expDate" class="bnm-input" value="${MT.todayInputVal()}" />
       </div>
       <div class="modal-actions">
         <button class="btn-secondary" onclick="closeModal()">Cancel</button>
